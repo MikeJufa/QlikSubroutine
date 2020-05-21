@@ -1,0 +1,76 @@
+Product_Table:
+Load * Inline
+[
+ProductID, Product, UnitCost
+A001, CPU, 500
+A002, Motherboard, 200
+A003, Ram, 300
+A004, SSD, 300
+]
+;
+
+Order_Table:
+Load * Inline
+[
+ProductID, CustomerID, OrderID, Quantity, Amount
+A001, C001, 1, 1, 750
+A001, C002, 2, 2, 1500
+A002, C001, 3, 1, 320
+A003, C001, 4, 1, 430
+A004, C001, 5, 1, 450
+A004, C003, 6, 3, 1550
+A002, C004, 7, 2, 640
+]
+;
+
+Customer_Table:
+Load * Inline
+[
+CustomerID, Discount, State
+C001, 0.02, ON
+C002, 0.02, ON
+C003, 0.03, BC
+C004, 0.05, QC
+]
+;
+
+State_Table:
+Load * Inline
+[
+State, GST, PST
+ON, 0.13, 0
+BC, 0.05, 0.085
+QC, 0.05, 0.09
+]
+;
+
+Sub MapField(keyField, valueField, table)
+    // Create mapping table and set vValueField var // equal to ApplyMap() string.
+    [Map_$(keyField)_$(valueField)]:
+    Mapping Load [$(keyField)], [$(valueField)]
+    Resident $(table);
+    Set [v$(valueField)] = ApplyMap('Map_$(keyField)_$(valueField)', [$(keyField)]);
+End Sub
+
+Call MapField('ProductID', 'UnitCost', 'Product_Table')
+Call MapField('CustomerID', 'Discount', 'Customer_Table')
+Call MapField('CustomerID', 'State', 'Customer_Table')
+Call MapField('State', 'GST', 'State_Table')
+Call MapField('State', 'PST', 'State_Table')
+
+
+NetAmount:
+LOAD
+  OrderID,
+  Amount - RangeSum(
+  Quantity * $(vUnitCost),
+  Amount * $(vDiscount),
+  Amount * $(vGST),
+  Amount * $(vPST)
+  ) as NetAmount
+;
+LOAD
+  *,
+  $(vState) as State
+Resident Order_Table
+;
