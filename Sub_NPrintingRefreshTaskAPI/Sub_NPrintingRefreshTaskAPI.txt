@@ -1,0 +1,251 @@
+/*
+    Name: NPrintingRefreshTaskAPI
+
+    Description: This sub will trigger a published task for a given NPrinting app to generate and distribute the report
+
+    Parameters:
+        vRestLoginGetConnection: REST connection for GET method
+        vRestLoginPostConnection: REST connection for POST method
+        vBaseURL: The base REST API URL
+        vNPrintingAppName: The NPrinting app name
+        vReturnCode: The global variable passed to the sub for the return code
+
+    Return Code:
+         0: Success
+        -1: Can't extract the session cookie (Can't login)
+        -2: Can't extratc the appId (Can't find the app)
+        -3: Can't extract the connectionId (Can't find the connction)
+        -4: Can't extratc the taskId (Can't find the published task)
+
+    Note: Define a global variale and use it to be an argumnet for parameter vReturnCode. This sub only supports when a  QLik NPrinting app
+          only has ONE connection and ONE published task. It may not work if the app has multiple connections or published tasks.
+*/
+SUB NPrintingRefreshTaskAPI(vRestLoginGetConnection, vRestLoginPostConnection, vBaseURL, vNPrintingAppName, vReturnCode)
+
+    //Connect to NPrinting using the REST Connection (GET)
+    LIB CONNECT TO '$(vRestLoginGetConnection)';
+
+    //Perform a GET call to NPrinting NTLM login API
+    RestConnectorMasterTable:
+    SQL
+    SELECT
+          "Set-Cookie"
+        , "__KEY__response_header"
+    FROM JSON "_response_header" PK "__KEY__response_header"
+    ;
+
+    [_response_header]:
+    LOAD
+        [Set-Cookie] AS [Set-Cookie]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__KEY__response_header])
+    ;
+
+    //Extracts session cookie from the API response
+    LET vCookieRaw = Peek('Set-Cookie',0,'_response_header');
+    LET vCookie = TextBetween('$(vCookieRaw)','Secure,','Path=/',2);
+
+    DROP TABLE RestConnectorMasterTable;
+
+    // Check if vCookie is empty. If it is, stop processing and log the error messgage
+    if isNull(vCookie) then
+        trace ("==========================Can't extract session Cookie==========================");
+
+        set vReturnCode = -1;
+        Exit Sub;
+    end if
+
+
+    //GET the list of the NPrinting Apps that match the desired condition
+    //LIB CONNECT TO 'NPrinting REST Login (bocad_zhuf)';
+	Let vURL = '$(vBaseURL)' & 'apps';
+
+    RestAppsMasterTable:
+    SQL
+    SELECT
+          "__KEY_data"
+        , (SELECT
+              "id"
+            , "name"
+            , "__FK_items"
+        FROM "items" FK "__FK_items")
+    FROM JSON (wrap off) "data" PK "__KEY_data"
+    WITH CONNECTION( URL "$(vURL)", HTTPHEADER "cookie" "$(vCookie)" )
+    ;
+
+    [apps_items]:
+    LOAD
+          [id] AS [apps_appId]
+        , [name] AS [apps_appName]
+    RESIDENT RestAppsMasterTable
+    WHERE NOT IsNull([__FK_items]) AND SubStringCount([name], '$(vNPrintingAppName)') <> 0
+    ;
+
+    //Extracts the appId of the desired NP App
+    LET vAppId = Peek('apps_appId',0,'apps_items');
+
+    DROP TABLE RestAppsMasterTable;
+
+    // Check if vAppId is empty. If it is, stop processing and log the error messgage
+    if isNull(vAppId) then
+        trace ("==========================Can't extract appId==========================");
+
+		set vReturnCode = -2;
+        exit Sub;
+    end if
+
+
+    //GET the list of the connections contained in the NP App selected before
+   	Let vURL = '$(vBaseURL)' & 'connections/';
+
+    RestConnectionMasterTable:
+    SQL
+    SELECT
+          "__KEY_data"
+        , (SELECT
+              "id"
+            , "name"
+            , "appId"
+            , "__FK_items"
+    FROM "items" FK "__FK_items")
+    FROM JSON (wrap off) "data" PK "__KEY_data"
+    WITH CONNECTION( URL "$(vURL)", HTTPHEADER "cookie" "$(vCookie)" )
+    ;
+
+    [connection_items]:
+    LOAD
+          [id] AS [connection_id]
+        , [name] AS [connection_name]
+        , [appId] AS [connection_appId]
+    RESIDENT RestConnectionMasterTable
+    WHERE NOT IsNull([__FK_items]) AND [appId] = '$(vAppId)'
+    ;
+
+    //Extracts the desired Connection ID
+    LET vConnectionId = Peek('connection_id',0,'connection_items');
+
+    //Compose the URL for the POST call that triggers a reload metadata
+    LET vReloadMetadataURL = '$(vURL)'&'$(vConnectionId)'&'/reload';
+
+    //Compose the URL for the GET call that checks the connection status
+    LET vConnectionStatusURL = '$(vURL)'&'$(vConnectionId)';
+
+    DROP TABLE RestConnectionMasterTable;
+
+    // Check if vConnectionId is empty. If it is, stop processing and log the error messgage
+
+    if isNull(vConnectionId) then
+        trace ("==========================Can't extract ConnectionId==========================");
+
+        set vReturnCode = -3;
+        exit Sub;
+    end if
+
+
+    //POST a reload metadata trigger for the desired connection
+    LIB CONNECT TO '$(vRestLoginPostConnection)';
+
+    RestNPReloadMetadataTable:
+    SQL
+    SELECT
+        "__KEY_data"
+    FROM JSON (wrap off) "data" PK "__KEY_data"
+    WITH CONNECTION( URL "$(vReloadMetadataURL)", HTTPHEADER "cookie" "$(vCookie)")
+    ;
+
+    [metadata_items]:
+    LOAD
+        [__KEY_data] AS [__KEY_data]
+    RESIDENT RestNPReloadMetadataTable
+    WHERE NOT IsNull([__KEY_data])
+    ;
+
+    DROP TABLE RestNPReloadMetadataTable;
+
+
+    LIB CONNECT TO '$(vRestLoginGetConnection)';
+
+    let vConnectionStatus = '';
+    DO while (vConnectionStatus <> 'Generated')
+        RestConnectionStatusTable:
+        SQL
+        SELECT
+            "cacheStatus"
+        FROM JSON (wrap off) "data"
+        WITH CONNECTION( URL "$(vConnectionStatusURL)", HTTPHEADER "cookie" "$(vCookie)")
+        ;
+
+        [connection_data]:
+        LOAD
+            [cacheStatus] AS [connection_cacheStatus]
+        RESIDENT RestConnectionStatusTable
+        ;
+
+        LET vConnectionStatus = Peek('connection_cacheStatus',0,'connection_data');
+
+        DROP TABLE RestConnectionStatusTable;
+        DROP TABLE [connection_data];
+    Loop
+
+   	Let vURL = '$(vBaseURL)' & 'tasks/';
+
+    RestNPTasksMasterTable:
+    SQL
+    SELECT
+          "__KEY_data"
+        , (SELECT
+              "id"
+            , "name"
+            , "appId"
+            , "__FK_items"
+    FROM "items" FK "__FK_items")
+    FROM JSON (wrap off) "data" PK "__KEY_data"
+    WITH CONNECTION( URL "$(vURL)", HTTPHEADER "cookie" "$(vCookie)" )
+    ;
+
+    [task_items]:
+    LOAD
+          [id] AS [tasks_taskId]
+        , [name] AS [tasks_taskName]
+        , [appId] AS [tasks_appId]
+    RESIDENT RestNPTasksMasterTable
+    WHERE NOT IsNull([__FK_items]) AND [appId] = '$(vAppId)'
+    ;
+
+    LET vTaskId = Peek('tasks_taskId',0,'task_items');
+    LET vPublshTaskURL = '$(vURL)'&'$(vTaskId)'&'/executions';
+
+    DROP TABLE RestNPTasksMasterTable;
+
+
+    // Check if vTaskId is empty. If it is, stop processing and log the error messgage
+    if isNull(vTaskId) then
+        trace ("==========================Can't extract TaskId==========================");
+
+        set vReturnCode = -4;
+        exit Sub;
+    end if
+
+
+    LIB CONNECT TO '$(vRestLoginPostConnection)';
+
+    RestNPTaskTriggerTable:
+    SQL
+    SELECT
+        "__KEY_data"
+    FROM JSON (wrap off) "data" PK "__KEY_data"
+    WITH CONNECTION( URL "$(vPublshTaskURL)", HTTPHEADER "cookie" "$(vCookie)")
+    ;
+
+    [_post_items]:
+    LOAD
+        [__KEY_data] AS [__KEY_data]
+    RESIDENT RestNPTaskTriggerTable
+    WHERE NOT IsNull([__KEY_data])
+    ;
+
+    DROP TABLE RestNPTaskTriggerTable;
+
+    set vReturnCode = 0;
+
+END SUB

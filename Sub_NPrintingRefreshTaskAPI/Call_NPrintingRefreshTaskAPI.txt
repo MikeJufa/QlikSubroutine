@@ -1,0 +1,23 @@
+/*
+	Example code to call the SUB
+*/
+// Create a global variable for the return code, give it a random integrer value (not 0, -1, -2, -3, -4)
+set vRestReturnCode = 10;
+
+// Set the base URL for Qlik NPrinting REST API
+set vNPrintingRestUrl = 'https://j-waqlik2:4993/api/v1/';
+
+// Set the two REST connections
+set vConnectionGet = 'NPrinting REST Login (bocad_zhuf)';
+set vConnectionPost = 'NPrinting REST Login POST (bocad_zhuf) (bocad_wati)';
+
+$(Include=lib://AttachedFiles/Sub_NPringtingRefreshTaskAPI.txt);
+
+call NPrintingRefreshTaskAPI('$(vConnectionGet)', '$(vConnectionPost)', vNPrintingRestUrl, 'SWIFT_HABS_Reconciliation_FMBODW_01', vRestReturnCode);
+
+//Check return code
+if (vRestReturnCode = 0) then
+    trace 'Success';
+else
+    trace 'Failure';
+end if
