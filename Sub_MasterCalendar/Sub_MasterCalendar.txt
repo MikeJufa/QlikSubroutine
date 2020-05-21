@@ -1,0 +1,35 @@
+/******************MasterCalendarSub***************************/
+SUB CalendarFromField(_field, _calendar, _prefix)
+  [$(_calendar)]:
+  //Generate Final Calendar
+  Load
+       [$(_field)]
+      ,Year([$(_field)]) as [$(_prefix)Year]
+      ,'Q'&Ceil(Month([$(_field)])/3) as [$(_prefix)Quarter]
+      ,Month([$(_field)]) as [$(_prefix)Month]
+      ,Date(MonthStart([$(_field)]),'MMM-YY') as [$(_prefix)YearMonth]
+      ,Date(MonthStart([$(_field)]),'YYYYMM') as [$(_prefix)YearMonthNum]
+      ,Week([$(_field)]) as [$(_prefix)Week]
+      ,WeekDay([$(_field)]) as [$(_prefix)WeekDay]
+      ,Day([$(_field)]) as [$(_prefix)Day]
+      ,WeekStart([$(_field)]) as [$(_prefix)WeekOf]
+      ,if(DayNumberOfYear([$(_field)])<=DayNumberOfYear(Today()), 1, 0) as [$(_prefix)IsInYTD]
+      ,if(Day([$(_field)])<=Day(Today()), 1, 0) as [$(_prefix)IsInMTD]
+  ;
+  //Generate a range of dates between min and max dates.
+  Load
+       Date(DateMin + IterNo()) as [$(_field)]                       //Link Field
+  While DateMin + IterNo() <= DateMax
+  ;
+  //Find min and max of date of field values.
+  Load
+       Min(datefield)-1 as DateMin
+      ,Max(datefield) as DateMax
+  ;
+  //Load date field values.
+  Load
+       FieldValue('$(_field)', RecNo()) as datefield
+  AutoGenerate FieldValueCount('$(_field)')
+  ;
+
+END SUB
